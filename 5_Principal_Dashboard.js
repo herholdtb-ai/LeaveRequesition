@@ -2,70 +2,98 @@ import wixData from 'wix-data';
 
 /**
  * PAGE: Principal Dashboard
- * This dashboard allows the Principal (bezuidenhouth@hsgrabouw.co.za) 
- * to finalize leave requests that have been reviewed by supervisors.
+ * Manages User Registrations and Leave Applications.
  */
 
 $w.onReady(function () {
-    loadPrincipalQueue();
+    loadRegistrationQueue();
+    loadLeaveQueue();
 });
 
-async function loadPrincipalQueue() {
+// --- SECTION 1: USER REGISTRATIONS ---
+
+async function loadRegistrationQueue() {
     try {
-        // Query for requests specifically waiting for the Principal
+        // Find users who are DH-confirmed but not yet Principal-approved
+        const results = await wixData.query("UserRegistry")
+            .eq("status", "Confirmed Supervisor")
+            .find();
+
+        if (results.items.length > 0) {
+            $w('#repeaterRegistrations').data = results.items;
+            $w('#repeaterRegistrations').onItemReady(($item, itemData) => {
+                $item('#txtName').text = itemData.title;
+                $item('#txtEmail').text = itemData.email;
+                $item('#txtDH').text = `Vouched by: ${itemData.supervisorEmail}`;
+
+                $item('#btnApproveUser').onClick(async () => {
+                    $item('#btnApproveUser').disable();
+                    await updateUserStatus(itemData._id, "Approved");
+                });
+
+                $item('#btnDeclineUser').onClick(async () => {
+                    $item('#btnDeclineUser').disable();
+                    await updateUserStatus(itemData._id, "Declined");
+                });
+            });
+            $w('#repeaterRegistrations').show();
+        } else {
+            $w('#repeaterRegistrations').hide();
+        }
+    } catch (err) {
+        console.error("User queue error:", err);
+    }
+}
+
+async function updateUserStatus(id, newStatus) {
+    const user = await wixData.get("UserRegistry", id);
+    user.status = newStatus;
+    await wixData.update("UserRegistry", user);
+    // The registration.jsw afterUpdate hook will automatically send the email
+    loadRegistrationQueue(); 
+}
+
+// --- SECTION 2: LEAVE APPLICATIONS ---
+
+async function loadLeaveQueue() {
+    try {
+        // Query for leave requests waiting for Principal review
         const results = await wixData.query("LeaveApplications")
             .eq("applicationStatus", "Pending: Principal")
             .find();
 
         if (results.items.length > 0) {
-            $w('#repeaterPrincipal').data = results.items;
-            $w('#repeaterPrincipal').onItemReady(($item, itemData) => {
-                // Displaying core data
+            $w('#repeaterLeave').data = results.items;
+            $w('#repeaterLeave').onItemReady(($item, itemData) => {
                 $item('#txtApplicant').text = itemData.applicantEmail;
-                $item('#txtSupervisor').text = `Supervisor: ${itemData.master_supervisor}`;
-                $item('#txtDateRange').text = `${itemData.startingDate.toLocaleDateString()} - ${itemData.endDate.toLocaleDateString()}`;
-                
-                // Show Supervisor's Remarks for context
-                $item('#txtSupRemarks').text = itemData.supervisorRemarks || "No remarks provided.";
+                $item('#txtDates').text = `${itemData.startingDate.toLocaleDateString()} - ${itemData.endDate.toLocaleDateString()}`;
+                $item('#txtDHRemarks').text = `DH Remarks: ${itemData.supervisorRemarks || "None"}`;
 
-                // Final Approval
-                $item('#btnFinalApprove').onClick(async () => {
-                    $item('#btnFinalApprove').disable();
-                    await finalizeRequest(itemData._id, "Approved", $item('#inpPrincipalRemarks').value);
+                $item('#btnApproveLeave').onClick(async () => {
+                    $item('#btnApproveLeave').disable();
+                    await processLeave(itemData._id, "Approved", "Complete", $item('#inpPrinRemarks').value);
                 });
 
-                // Final Rejection
-                $item('#btnFinalReject').onClick(async () => {
-                    $item('#btnFinalReject').disable();
-                    await finalizeRequest(itemData._id, "Rejected", $item('#inpPrincipalRemarks').value);
+                $item('#btnRejectLeave').onClick(async () => {
+                    $item('#btnRejectLeave').disable();
+                    await processLeave(itemData._id, "Rejected", "Complete", $item('#inpPrinRemarks').value);
                 });
             });
+            $w('#repeaterLeave').show();
         } else {
-            $w('#repeaterPrincipal').hide();
-            $w('#txtEmptyMessage').show();
+            $w('#repeaterLeave').hide();
         }
-    } catch (error) {
-        console.error("Principal load error:", error);
+    } catch (err) {
+        console.error("Leave queue error:", err);
     }
 }
 
-/**
- * Finalizes the record.
- * This update triggers the data.js 'afterUpdate' hook to send the FINAL email.
- */
-async function finalizeRequest(id, decision, remarks) {
-    try {
-        const item = await wixData.get("LeaveApplications", id);
-        
-        item.principalDecision = decision;
-        item.principalRemarks = remarks || "";
-        item.applicationStatus = "Complete"; // This is the trigger for the final email
-
-        await wixData.update("LeaveApplications", item);
-        
-        // Refresh the repeater
-        loadPrincipalQueue();
-    } catch (err) {
-        console.error("Finalize failed:", err);
-    }
+async function processLeave(id, decision, status, remarks) {
+    const item = await wixData.get("LeaveApplications", id);
+    item.principalDecision = decision;
+    item.applicationStatus = status;
+    item.principalRemarks = remarks;
+    await wixData.update("LeaveApplications", item);
+    // The data.js afterUpdate hook will send the cumulative email
+    loadLeaveQueue();
 }
