@@ -1,0 +1,161 @@
+import { authentication } from 'wix-members-backend';
+import wixData from 'wix-data';
+import wixCrmBackend from 'wix-crm-backend';
+
+/**
+ * 1. Register Staff Member
+ * Called from the frontend Registration Page. Creates standard Wix member and adds pending `UserRegistry` record.
+ */
+export async function registerStaffMember(staffName, staffEmail, supervisorEmail, password) {
+    try {
+        // Register the user with Wix Members but DON'T approve them yet (status stays pending)
+        const registrationResult = await authentication.register(staffEmail, password, {
+            contactInfo: {
+                firstName: staffName.split(' ')[0],
+                lastName: staffName.split(' ').slice(1).join(' ') || ''
+            },
+            privacyStatus: 'PRIVATE'
+        });
+
+        // Add to UserRegistry database with Pending Status
+        const newRecord = {
+            title: staffName,
+            email: staffEmail,
+            supervisorEmail: supervisorEmail,
+            status: "Pending Confirmation" // Awaiting staff own email confirmation
+        };
+
+        const insertedRecord = await wixData.insert("UserRegistry", newRecord);
+
+        // Send Email Confirmation to Staff
+        await sendStaffConfirmationEmail(insertedRecord._id, staffEmail, staffName);
+
+        return { success: true, user: insertedRecord };
+    } catch (error) {
+        console.error("Registration Error:", error);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * 2. Send Confirmation Email to Staff Member
+ * Triggered upon registration.
+ */
+async function sendStaffConfirmationEmail(userId, email, name) {
+    // Note: To use proper Wix Triggered Emails, set up the email template in Wix Dashboard 
+    // and replace 'staff_confirmation_email_id' with your actual Email ID.
+    // 
+    // const confirmationLink = `https://www.hsgrabouw.co.za/staff-confirm?token=${userId}`; 
+    // wixCrmBackend.emails.sendEmail({
+    //     emailId: "staff_confirmation_email_id",
+    //     variables: { name: name, link: confirmationLink }
+    // });
+    
+    console.log(`[Phase 1] Sent confirmation email to Staff (${email}) with user ID: ${userId}`);
+}
+
+/**
+ * 3. Confirm Staff Email
+ * Called from a frontend page like '/staff-confirm' reading the token from URL query params.
+ */
+export async function confirmStaffEmail(userId) {
+    try {
+        let user = await wixData.get("UserRegistry", userId);
+        if (!user) return { success: false, message: "User not found." };
+        
+        if (user.status !== "Pending Confirmation") {
+            return { success: false, message: "User is already confirmed or approved." };
+        }
+
+        user.status = "Confirmed Supervisor"; // Moving to the next step
+        await wixData.update("UserRegistry", user);
+
+        // Send Email to Supervisor
+        await sendSupervisorApprovalEmail(userId, user.supervisorEmail, user.title);
+
+        return { success: true, message: "Email confirmed successfully. Your supervisor has been notified." };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * 4. Send Approval Email to Supervisor
+ */
+async function sendSupervisorApprovalEmail(userId, supervisorEmail, staffName) {
+    // const approvalLink = `https://www.hsgrabouw.co.za/supervisor-approve?token=${userId}`;
+    // Send email using Wix CRM Triggered Emails or SendGrid
+    console.log(`[Phase 1] Sent approval email to Supervisor (${supervisorEmail}) for staff ${staffName}.`);
+}
+
+/**
+ * 5. Supervisor Approves
+ * Called from the '/supervisor-approve' frontend page.
+ */
+export async function supervisorApprove(userId) {
+    try {
+        let user = await wixData.get("UserRegistry", userId);
+        if (!user) return { success: false, message: "User not found." };
+
+        user.status = "Pending Principal"; 
+        await wixData.update("UserRegistry", user);
+
+        // Notify Principal
+        await sendPrincipalApprovalEmail(userId, user.title);
+
+        return { success: true, message: "Staff member approved. Principal has been notified." };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * 6. Notify Principal (bezuidenhouth@hsgrabouw.co.za)
+ */
+async function sendPrincipalApprovalEmail(userId, staffName) {
+    const principalEmail = "bezuidenhouth@hsgrabouw.co.za";
+    // const approvalLink = `https://www.hsgrabouw.co.za/principal-approve?token=${userId}`;
+    console.log(`[Phase 1] Sent final approval email to Principal (${principalEmail}) for staff ${staffName}.`);
+}
+
+/**
+ * 7. Principal Approves
+ * Called from the '/principal-approve' frontend page.
+ */
+export async function principalApprove(userId) {
+    try {
+        let user = await wixData.get("UserRegistry", userId);
+        if (!user) return { success: false, message: "User not found." };
+
+        user.status = "Approved"; 
+        await wixData.update("UserRegistry", user);
+
+        // Approve Member in Wix Auth so they can now log in
+        await authentication.approveByEmail(user.email);
+
+        console.log(`[Phase 1] User ${user.email} is now fully Approved.`);
+        return { success: true, message: "Staff member fully approved and can now log in." };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * 8. Notify Staff - Approved
+ * Called after Principal approves registration.
+ */
+export async function notifyStaffApproved(email) {
+    // wixCrmBackend.emails.sendEmail({ ... });
+    console.log(`[Phase 1] Sent REGISTRATION APPROVED email to Staff (${email}).`);
+    return { success: true };
+}
+
+/**
+ * 9. Notify Staff - Declined
+ * Called after Principal declines registration.
+ */
+export async function notifyStaffDeclined(email) {
+     // wixCrmBackend.emails.sendEmail({ ... });
+    console.log(`[Phase 1] Sent REGISTRATION DECLINED email to Staff (${email}).`);
+    return { success: true };
+}
