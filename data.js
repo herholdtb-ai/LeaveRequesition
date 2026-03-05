@@ -1,5 +1,6 @@
 import wixData from 'wix-data';
-// import sgMail from '@sendgrid/mail'; // Make sure to install @sendgrid/mail in Wix NPM Packages
+import sgMail from '@sendgrid/mail'; //
+import { getSecret } from 'wix-secrets-backend'; //
 
 // --- BEFORE INSERT HOOK ---
 // Applies conditional routing BEFORE the record is saved to the database.
@@ -32,12 +33,10 @@ export async function LeaveApplications_afterInsert(item, context) {
         // Trigger an email to the Supervisor with a link to a "Review Page"
         const reviewLink = `https://www.hsgrabouw.co.za/supervisor-review?appId=${applicationId}`;
         console.log(`[Phase 3] Notifying Supervisor (${supervisorEmail}) to review application. Link: ${reviewLink}`);
-        // wixCrmBackend.emails.sendEmail({...});
     } else if (item.applicationStatus === "Pending: Principal") {
         // Notify Principal immediately if bypassed
         const reviewLink = `https://www.hsgrabouw.co.za/principal-review?appId=${applicationId}`;
         console.log(`[Phase 3] Supervisor bypassed. Notifying Principal (bezuidenhouth@hsgrabouw.co.za) to review application. Link: ${reviewLink}`);
-        // wixCrmBackend.emails.sendEmail({...});
     }
 
     return item;
@@ -82,16 +81,13 @@ export async function LeaveApplications_beforeUpdate(item, context) {
 
 // --- AFTER UPDATE HOOK ---
 export async function LeaveApplications_afterUpdate(item, context) {
-    // Check if the status literally changed to "Complete"
-    const originalItem = context.currentItem; // old db state
+    const originalItem = context.currentItem; 
 
     if (originalItem && originalItem.applicationStatus !== "Complete" && item.applicationStatus === "Complete") {
-        // Phase 3: Final Export
         const adminEmail = "admin@hsgrabouw.co.za";
         const supervisorEmail = item.actingSupervisorEmail;
         const applicantEmail = item.applicantEmail;
 
-        // Format dates safely if they exist
         const formatTime = (dateObj) => dateObj ? dateObj.toLocaleString() : "N/A";
 
         const emailContent = {
@@ -113,26 +109,14 @@ export async function LeaveApplications_afterUpdate(item, context) {
             `
         };
 
-        // Notify all 3 relevant parties
-        console.log(`[Phase 3 Final Export] Emailing: ${adminEmail}, ${supervisorEmail}, ${applicantEmail}`);
-        console.log("Email Payload: ", emailContent);
-
-        // --- SENDGRID IMPLEMENTATION ---
-        // Sending raw text to arbitrary emails is best done via SendGrid in Velo.
-        // 1. Install "@sendgrid/mail" in the Wix NPM packages panel.
-        // 2. Uncomment the import at the top of this file and the code below.
-        // 3. Add your SendGrid API key securely in the Wix Secrets Manager.
-
-        /*
-        import { getSecret } from 'wix-secrets-backend';
-        
+        // --- ACTIVE SENDGRID IMPLEMENTATION ---
         try {
             const apiKey = await getSecret("SENDGRID_API_KEY");
             sgMail.setApiKey(apiKey);
             
             const msg = {
-                to: [applicantEmail, supervisorEmail, adminEmail],
-                from: 'admin@hsgrabouw.co.za', // Must be a verified sender in SendGrid
+                to: [applicantEmail, supervisorEmail, adminEmail], // Notifies all 3 parties
+                from: 'admin@hsgrabouw.co.za', 
                 subject: emailContent.subject,
                 text: emailContent.body,
             };
@@ -142,8 +126,6 @@ export async function LeaveApplications_afterUpdate(item, context) {
         } catch (error) {
             console.error("Failed to send SendGrid email:", error);
         }
-        */
     }
-
     return item;
 }
