@@ -134,6 +134,83 @@ This report reflects the explicit preference to calculate leave duration using *
         let diff = new Date(end) - new Date(start);
         let days = Math.floor(diff / 86400000) + 1;
         $w('#totalDaysDisplay').text = `Total calendar days: ${days}`;
+  # Leave Approval Process: Email vs Dashboard
+
+**Short Answer**  
+No — the current system **does **not** allow approving or rejecting leave requests by clicking links or buttons directly inside the received emails.**
+
+Approvals and decisions can **only** be made through the **dashboards** (DH Dashboard and Principal Dashboard). Emails serve only as **notifications** and contain links to guide the reviewer to the correct dashboard.
+
+## How the Process Works Today
+
+### Emails (Notification Only)
+- **Purpose**: Inform users of events and direct them to take action in the system.
+- **Content examples**:
+  - Applicant receives: "Submission Received" with full copy of their request.
+  - DH receives: "Review Required – New Leave Request" → includes **link to DH Dashboard**.
+  - Principal receives: "Review Required – Awaiting Principal Decision" → includes **link to Principal Dashboard**.
+  - After DH decision: Update email to applicant + notification to Principal (again with dashboard link).
+  - After Principal decision: Final "Decision Made" email to applicant, DH, and admin (no action links).
+- **No interactive elements**:  
+  Emails do **not** contain:
+  - "Approve" / "Reject" / "Supported" / "Not Supported" buttons
+  - Direct action links that update the database
+  - Secure tokens/forms for one-click decisions
+
+### Dashboards (Where Decisions Happen)
+- **DH Dashboard** (`4_DH_Dashboard.js` / page):
+  - Shows only pending requests assigned to the logged-in DH (filtered by `master_supervisor`).
+  - Displays full request details (dates, total calendar days, reason, contingencies).
+  - Allows selection of "Supported" / "Not Supported" + remarks field.
+  - Submit button updates the record → triggers after-update hooks and next emails.
+- **Principal Dashboard** (`5_Principal_Dashboard.js` / page):
+  - Shows pending requests (post-DH or bypassed).
+  - Displays full history including DH decision/remarks if present.
+  - Allows "Approved" / "Rejected" + remarks.
+  - Submit updates status to "Complete" / "Rejected" → triggers final emails.
+
+### Summary Table: Where Can You Perform Actions?
+
+| Action                              | Via Email Click/Link? | Via Dashboard? | Notes |
+|-------------------------------------|-----------------------|----------------|-------|
+| Receive notification                | Yes                   | —              | Emails sent automatically |
+| View full request details           | Partial (text copy)   | Yes (live data)| Dashboard shows latest status |
+| Make decision (Approve/Reject/Support) | **No**             | **Yes**        | Only dashboard submit updates DB |
+| Add remarks                         | No                    | Yes            | — |
+| Trigger status change & next emails | No                    | Yes            | After-update hooks handle this |
+| Access the system to act            | Link to dashboard     | Direct login   | Requires member login |
+
+## Why This Design?
+**Advantages (current approach):**
+- Stronger security: Decisions made only inside authenticated Wix member area.
+- Full context: Reviewer sees complete request history and live status before deciding.
+- Easier role enforcement: Backend/frontend checks prevent unauthorized actions.
+
+**Disadvantages:**
+- Less convenient, especially on mobile.
+- Requires extra steps: open email → click link → login (if needed) → navigate → decide.
+
+## Possible Future Improvement: One-Click Email Approvals
+This is **not currently implemented**, but it's a common and feasible enhancement.
+
+**How it could work:**
+1. When sending review email → generate unique, time-limited token (using `VerificationTokens` collection pattern from registration).
+2. Include secure links in email:  
+   - `https://yoursite.com/approve?token=abc123&action=support`  
+   - `https://yoursite.com/approve?token=abc123&action=reject`
+3. Landing page (new Velo page or backend endpoint) validates token → shows request summary → lets user confirm decision → updates record.
+4. Token expires after 48–72 hours or single use.
+
+**Benefits**: Faster mobile approvals, especially for principals/DHs on the go.  
+**Requirements**: Extra security (token hashing, IP/session checks), audit logging of token usage.
+
+If you want this feature added, I can provide:
+- Suggested database additions
+- Velo code snippets for token generation/validation
+- Updated email template examples
+- New workflow diagram
+
+Let me know your preference — keep dashboard-only, or move toward email quick-actions?
       }
     }
   });
