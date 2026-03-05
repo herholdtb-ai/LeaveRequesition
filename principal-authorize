@@ -1,0 +1,20 @@
+import { principalAuthorizeStaff } from 'backend/registration.jsw';
+import wixLocation from 'wix-location';
+
+$w.onReady(async function () {
+    const userId = wixLocation.query.id;
+
+    if (userId) {
+        try {
+            const result = await principalAuthorizeStaff(userId);
+            if (result.success) {
+                $w('#txtStatus').text = "Sukses! Die rekening is nou goedgekeur en die personeellid is in kennis gestel.";
+            } else {
+                $w('#txtStatus').text = "Goedkeuring het misluk. Die rekening is dalk reeds goedgekeur.";
+            }
+        } catch (err) {
+            $w('#txtStatus').text = "Fout tydens goedkeuring.";
+            console.error(err);
+        }
+    }
+});
