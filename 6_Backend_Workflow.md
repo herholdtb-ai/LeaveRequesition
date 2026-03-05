@@ -1,35 +1,18 @@
-# Email Notifications: Wix Automations vs Velo
+# Backend Workflow: Automated Leave System
 
-There are two ways to send emails when leave applications are approved or rejected. You can use standard Wix Automations (no code) or the backend Velo Data hooks already set up in this system.
+This document explains the automated event-driven architecture of the LeaveRequest system.
 
-## Option 1: Standard Wix Automations (No Code - Includes Dynamic Data)
-Wix Automations allows you to insert dynamic variables from the database directly into the email body without writing any code.
+## 1. Submission Flow (beforeInsert)
+When an educator clicks "Submit":
+1. The system captures the `originalSupervisorEmail` and `actingSupervisorEmail`.
+2. **Logic Check**: If `acting` is present, it becomes the `master_supervisor`; otherwise, the `original` is used.
+3. **Bypass Check**: If `master_supervisor` is the Principal, status is set to `Pending: Principal`. Otherwise, `Pending Supervisor`.
 
-1. Go to your Wix Dashboard -> **Automations** -> **+ New Automation**.
-2. **Trigger:** Select **Wix Data** -> **Item Updated**. Select the `LeaveApplications` Collection.
-3. Click **Add Condition** -> `applicationStatus` -> **Equals** -> `"Complete"`.
-4. **Action:** Select **Send an Email**.
-5. **To:** Choose the dynamic field `applicantEmail`.
-6. **Customize Email:** In the email editor, click the **"Add Dynamic Value"** button (usually represented by a `[ ]` or `{ }` icon).
-   - You can pull in *any* database field into the email text! 
-   - Example: *"Dear Applicant, your leave starting on **[startingDate]** for **[reason]** has been **[decision]**."*
+## 2. Notification Flow (afterInsert)
+1. **Applicant**: Receives a "Submission Received" email with a full copy of their request.
+2. **Reviewer**: If not bypassed, the `master_supervisor` receives a "Review Required" email with a link to their dashboard. If bypassed, the Principal receives this email.
 
-## Option 2: Velo Data Hooks (Advanced - Already in `data.js`)
-If you look at the `data.js` file included in this setup, there is an `afterUpdate` hook specifically designed to capture the entire history of the application and compile it into a single data object.
-
-In `data.js`, look for:
-```javascript
-const emailContent = {
-    subject: `Leave Application Complete - ${applicantEmail}`,
-    body: `
-        Applicant: ${applicantEmail}
-        Start: ${item.startingDate}
-        End: ${item.endDate}
-        Total Days: ${item.totalDays}
-        Reason: ${item.reason}
-        Decision: ${item.decision}
-        Remarks: ${item.remarks || "None"}
-    `
-};
-```
-This data hook automatically packages all the submitted fields into `emailContent.body`. To activate this, you simply need to connect Wix CRM or SendGrid where it says `// Use wixCrmBackend or Sendgrid here` in `data.js` (Lines 96-97). This gives you the most programmatic control over forming a comprehensive, standard form response.
+## 3. Review Flow (afterUpdate)
+1. **DH Approval**: When the DH updates the record, the system detects the status change from `Pending Supervisor` to `Pending: Principal`.
+2. **Transition Email**: The system automatically emails the Applicant (Update) and the Principal (Review Request) with the cumulative data.
+3. **Principal Approval**: When the Principal updates status to `Complete`, the system appends the mandatory office instructions and sends the final "Full History" email to Applicant, DH, and Admin.
