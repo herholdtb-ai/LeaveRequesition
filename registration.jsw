@@ -1,161 +1,139 @@
-import { authentication } from 'wix-members-backend';
+import { getSecret } from 'wix-secrets-backend';
+import sgMail from '@sendgrid/mail';
 import wixData from 'wix-data';
-import wixCrmBackend from 'wix-crm-backend';
+
+// Configuration
+const SENDER_EMAIL = "info@hsgrabouw.co.za";
+const PRINCIPAL_EMAIL = "bezuidenhouth@hsgrabouw.co.za";
+const BASE_URL = "https://www.hsgrabouw.co.za";
 
 /**
- * 1. Register Staff Member
- * Called from the frontend Registration Page. Creates standard Wix member and adds pending `UserRegistry` record.
+ * Internal Utility: Sends a SendGrid email
+ * Assumes SENDGRID_API_KEY is stored in Wix Secrets Manager
  */
-export async function registerStaffMember(staffName, staffEmail, supervisorEmail, password) {
+async function sendEmail(to, subject, body) {
     try {
-        // Register the user with Wix Members but DON'T approve them yet (status stays pending)
-        const registrationResult = await authentication.register(staffEmail, password, {
-            contactInfo: {
-                firstName: staffName.split(' ')[0],
-                lastName: staffName.split(' ').slice(1).join(' ') || ''
-            },
-            privacyStatus: 'PRIVATE'
-        });
+        const apiKey = await getSecret("SENDGRID_API_KEY");
+        sgMail.setApiKey(apiKey);
+        const msg = {
+            to: to,
+            from: SENDER_EMAIL,
+            subject: subject,
+            text: body,
+        };
+        await sgMail.send(msg);
+        return { success: true };
+    } catch (error) {
+        console.error("SendGrid Error:", error);
+        return { success: false, error: error.message };
+    }
+}
 
-        // Add to UserRegistry database with Pending Status
-        const newRecord = {
-            title: staffName,
-            email: staffEmail,
-            supervisorEmail: supervisorEmail,
-            status: "Pending Confirmation" // Awaiting staff own email confirmation
+/**
+ * STEP 1: Initial Registration
+ * Triggered by the Frontend Registration Page.
+ */
+export async function registerStaff(staffData) {
+    try {
+        const item = {
+            ...staffData,
+            status: "Unverified",
+            emailVerified: false,
+            supervisorConfirmed: false,
+            registrationTimestamp: new Date()
         };
 
-        const insertedRecord = await wixData.insert("UserRegistry", newRecord);
-
-        // Send Email Confirmation to Staff
-        await sendStaffConfirmationEmail(insertedRecord._id, staffEmail, staffName);
-
-        return { success: true, user: insertedRecord };
-    } catch (error) {
-        console.error("Registration Error:", error);
-        return { success: false, error: error.message };
+        const inserted = await wixData.insert("UserRegistry", item);
+        
+        // Generate verification link using the unique database ID
+        const verifyLink = `${BASE_URL}/verify-email?id=${inserted._id}`;
+        
+        const subject = "HS Grabouw: Verifieer jou e-pos / Verify your email";
+        const body = `Welkom by die HS Grabouw Verlofstelsel.\n\nKlik asseblief op die skakel hieronder om jou e-posadres te verifieer:\n${verifyLink}\n\nSodra jy geverifieer is, sal jou departementshoof gevra word om jou aanmelding te bevestig.`;
+        
+        await sendEmail(inserted.email, subject, body);
+        return { success: true, id: inserted._id };
+    } catch (err) {
+        return { success: false, error: err.message };
     }
 }
 
 /**
- * 2. Send Confirmation Email to Staff Member
- * Triggered upon registration.
+ * STEP 2: Email Verification
+ * Triggered by the /verify-email hidden page.
  */
-async function sendStaffConfirmationEmail(userId, email, name) {
-    // Note: To use proper Wix Triggered Emails, set up the email template in Wix Dashboard 
-    // and replace 'staff_confirmation_email_id' with your actual Email ID.
-    // 
-    // const confirmationLink = `https://www.hsgrabouw.co.za/staff-confirm?token=${userId}`; 
-    // wixCrmBackend.emails.sendEmail({
-    //     emailId: "staff_confirmation_email_id",
-    //     variables: { name: name, link: confirmationLink }
-    // });
-    
-    console.log(`[Phase 1] Sent confirmation email to Staff (${email}) with user ID: ${userId}`);
+export async function verifyUserEmail(userId) {
+    try {
+        const user = await wixData.get("UserRegistry", userId);
+        
+        if (user && user.status === "Unverified") {
+            user.status = "Pending";
+            user.emailVerified = true;
+            await wixData.update("UserRegistry", user);
+
+            // Trigger Email to Supervisor to confirm the reporting line
+            const confirmLink = `${BASE_URL}/confirm-staff?id=${user._id}`;
+            const supSubject = `Bevestig Personeellid: ${user.title}`;
+            const supBody = `Geagte Departementshoof,\n\n${user.title} het op die verlofstelsel geregistreer en aangedui dat hulle aan u rapporteer.\n\nKlik asseblief hieronder om te bevestig dat hierdie inligting korrek is:\n${confirmLink}\n\nNa u bevestiging sal die aansoek na die Prinsipaal gaan vir finale goedkeuring.`;
+            
+            await sendEmail(user.supervisorEmail, supSubject, supBody);
+            return { success: true };
+        }
+        return { success: false, message: "User already verified or not found." };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
 }
 
 /**
- * 3. Confirm Staff Email
- * Called from a frontend page like '/staff-confirm' reading the token from URL query params.
+ * STEP 3: Supervisor Vouching
+ * Triggered by the /confirm-staff hidden page.
  */
-export async function confirmStaffEmail(userId) {
+export async function supervisorConfirmStaff(userId) {
     try {
-        let user = await wixData.get("UserRegistry", userId);
-        if (!user) return { success: false, message: "User not found." };
+        const user = await wixData.get("UserRegistry", userId);
         
-        if (user.status !== "Pending Confirmation") {
-            return { success: false, message: "User is already confirmed or approved." };
+        if (user && user.status === "Pending") {
+            user.status = "Confirmed Supervisor";
+            user.supervisorConfirmed = true;
+            await wixData.update("UserRegistry", user);
+            
+            // Notify Principal that a vetted user is waiting for approval
+            const prinSubject = `Nuwe Personeel Goedkeuring: ${user.title}`;
+            const prinBody = `Meneer Bezuidenhout,\n\n'n Nuwe personeellid, ${user.title}, het hul e-pos geverifieer en is deur hul DH (${user.supervisorEmail}) bevestig.\n\nGaan asseblief na u dashboard om die finale goedkeuring te voltooi.`;
+            
+            await sendEmail(PRINCIPAL_EMAIL, prinSubject, prinBody);
+            return { success: true };
+        }
+        return { success: false, message: "Confirmation unavailable." };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * STEP 4: Principal Final Status Hook
+ * Automatically notifies user when Principal changes status to Approved or Declined.
+ */
+export async function UserRegistry_afterUpdate(item, context) {
+    const originalItem = context.currentItem;
+
+    if (originalItem && originalItem.status !== item.status) {
+        let subject = "";
+        let body = "";
+
+        if (item.status === "Approved") {
+            subject = "HS Grabouw: Rekening Goedgekeur / Account Approved";
+            body = `Geagte ${item.title},\n\nJou rekening op die HS Grabouw digitale verlofstelsel is nou amptelik goedgekeur.\n\nJy kan nou aanmeld om jou verlofversoeke aanlyn in te dien by: ${BASE_URL}/leave-request\n\nVriendelike groete,\nHS Grabouw Administrasie`;
+        } 
+        else if (item.status === "Declined") {
+            subject = "HS Grabouw: Rekening Geweier / Account Declined";
+            body = `Geagte ${item.title},\n\nU registrasie vir die verlofstelsel is ongelukkig nie goedgekeur nie. Kontak asseblief die kantoor vir meer inligting.`;
         }
 
-        user.status = "Confirmed Supervisor"; // Moving to the next step
-        await wixData.update("UserRegistry", user);
-
-        // Send Email to Supervisor
-        await sendSupervisorApprovalEmail(userId, user.supervisorEmail, user.title);
-
-        return { success: true, message: "Email confirmed successfully. Your supervisor has been notified." };
-    } catch (error) {
-        return { success: false, error: error.message };
+        if (subject) {
+            await sendEmail(item.email, subject, body);
+        }
     }
-}
-
-/**
- * 4. Send Approval Email to Supervisor
- */
-async function sendSupervisorApprovalEmail(userId, supervisorEmail, staffName) {
-    // const approvalLink = `https://www.hsgrabouw.co.za/supervisor-approve?token=${userId}`;
-    // Send email using Wix CRM Triggered Emails or SendGrid
-    console.log(`[Phase 1] Sent approval email to Supervisor (${supervisorEmail}) for staff ${staffName}.`);
-}
-
-/**
- * 5. Supervisor Approves
- * Called from the '/supervisor-approve' frontend page.
- */
-export async function supervisorApprove(userId) {
-    try {
-        let user = await wixData.get("UserRegistry", userId);
-        if (!user) return { success: false, message: "User not found." };
-
-        user.status = "Pending Principal"; 
-        await wixData.update("UserRegistry", user);
-
-        // Notify Principal
-        await sendPrincipalApprovalEmail(userId, user.title);
-
-        return { success: true, message: "Staff member approved. Principal has been notified." };
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-}
-
-/**
- * 6. Notify Principal (bezuidenhouth@hsgrabouw.co.za)
- */
-async function sendPrincipalApprovalEmail(userId, staffName) {
-    const principalEmail = "bezuidenhouth@hsgrabouw.co.za";
-    // const approvalLink = `https://www.hsgrabouw.co.za/principal-approve?token=${userId}`;
-    console.log(`[Phase 1] Sent final approval email to Principal (${principalEmail}) for staff ${staffName}.`);
-}
-
-/**
- * 7. Principal Approves
- * Called from the '/principal-approve' frontend page.
- */
-export async function principalApprove(userId) {
-    try {
-        let user = await wixData.get("UserRegistry", userId);
-        if (!user) return { success: false, message: "User not found." };
-
-        user.status = "Approved"; 
-        await wixData.update("UserRegistry", user);
-
-        // Approve Member in Wix Auth so they can now log in
-        await authentication.approveByEmail(user.email);
-
-        console.log(`[Phase 1] User ${user.email} is now fully Approved.`);
-        return { success: true, message: "Staff member fully approved and can now log in." };
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-}
-
-/**
- * 8. Notify Staff - Approved
- * Called after Principal approves registration.
- */
-export async function notifyStaffApproved(email) {
-    // wixCrmBackend.emails.sendEmail({ ... });
-    console.log(`[Phase 1] Sent REGISTRATION APPROVED email to Staff (${email}).`);
-    return { success: true };
-}
-
-/**
- * 9. Notify Staff - Declined
- * Called after Principal declines registration.
- */
-export async function notifyStaffDeclined(email) {
-     // wixCrmBackend.emails.sendEmail({ ... });
-    console.log(`[Phase 1] Sent REGISTRATION DECLINED email to Staff (${email}).`);
-    return { success: true };
+    return item;
 }
