@@ -30,11 +30,9 @@ export async function LeaveApplications_afterInsert(item, context) {
 
     // Phase 3: Notification
     if (item.applicationStatus === "Pending Supervisor") {
-        // Trigger an email to the Supervisor with a link to a "Review Page"
         const reviewLink = `https://www.hsgrabouw.co.za/supervisor-review?appId=${applicationId}`;
         console.log(`[Phase 3] Notifying Supervisor (${supervisorEmail}) to review application. Link: ${reviewLink}`);
     } else if (item.applicationStatus === "Pending: Principal") {
-        // Notify Principal immediately if bypassed
         const reviewLink = `https://www.hsgrabouw.co.za/principal-review?appId=${applicationId}`;
         console.log(`[Phase 3] Supervisor bypassed. Notifying Principal (bezuidenhouth@hsgrabouw.co.za) to review application. Link: ${reviewLink}`);
     }
@@ -57,17 +55,11 @@ export async function LeaveApplications_beforeUpdate(item, context) {
         item.principalDecisionTimestamp = new Date();
     }
 
-    // Only run this logic if the update came in as an approval
-    // Specifically looking for the Principal's Approval
+    // Principal's Approval Remark Appending
     if (item.applicationStatus === "Complete" && item.principalDecision === "Approved") {
-
-        // We need to check the OLD item from DB to see if `Complete` is a NEW status, 
-        // preventing us from appending text multiple times to remarks if updated again.
         if (originalItem && originalItem.applicationStatus !== "Complete") {
-            // Phase 3: Principal's Approval Remark Appending
             const extraText = "Onthou: Jy moet nogsteeds 'n verlofvorm voltooi en indien by die kantoor! Heg ook aan by jou verlofvorm bewys van jou afwesigheid (bv. siekbrief) indien nodig. Heg ook 'n uitdruk van hierdie skrywe aan by jou verlofvorm.";
 
-            // Append it to remarks smoothly
             if (item.principalRemarks) {
                 item.principalRemarks += "\n\n" + extraText;
             } else {
@@ -81,7 +73,7 @@ export async function LeaveApplications_beforeUpdate(item, context) {
 
 // --- AFTER UPDATE HOOK ---
 export async function LeaveApplications_afterUpdate(item, context) {
-    const originalItem = context.currentItem; 
+    const originalItem = context.currentItem;
 
     if (originalItem && originalItem.applicationStatus !== "Complete" && item.applicationStatus === "Complete") {
         const adminEmail = "admin@hsgrabouw.co.za";
@@ -90,6 +82,7 @@ export async function LeaveApplications_afterUpdate(item, context) {
 
         const formatTime = (dateObj) => dateObj ? dateObj.toLocaleString() : "N/A";
 
+        // Updated email body to include Substitution/Contingency Data
         const emailContent = {
             subject: `Leave Application Complete - ${applicantEmail}`,
             body: `
@@ -100,6 +93,15 @@ export async function LeaveApplications_afterUpdate(item, context) {
                 End: ${item.endDate}
                 Total Days: ${item.totalDays}
                 Reason: ${item.reason}
+
+                --- Substitution/Contingency Data ---
+                Period 1: ${item.contingencyData?.p1 || "No arrangement"}
+                Period 2: ${item.contingencyData?.p2 || "No arrangement"}
+                Period 3: ${item.contingencyData?.p3 || "No arrangement"}
+                Period 4: ${item.contingencyData?.p4 || "No arrangement"}
+                Period 5: ${item.contingencyData?.p5 || "No arrangement"}
+                Period 6: ${item.contingencyData?.p6 || "No arrangement"}
+                Period 7: ${item.contingencyData?.p7 || "No arrangement"}
                 
                 Supervisor Decision: ${item.supervisorDecision || "N/A"} (${formatTime(item.supervisorDecisionTimestamp)})
                 Supervisor Remarks: ${item.supervisorRemarks || "None"}
@@ -115,8 +117,8 @@ export async function LeaveApplications_afterUpdate(item, context) {
             sgMail.setApiKey(apiKey);
             
             const msg = {
-                to: [applicantEmail, supervisorEmail, adminEmail], // Notifies all 3 parties
-                from: 'admin@hsgrabouw.co.za', 
+                to: [applicantEmail, supervisorEmail, adminEmail],
+                from: 'admin@hsgrabouw.co.za',
                 subject: emailContent.subject,
                 text: emailContent.body,
             };
@@ -127,5 +129,6 @@ export async function LeaveApplications_afterUpdate(item, context) {
             console.error("Failed to send SendGrid email:", error);
         }
     }
+
     return item;
 }
