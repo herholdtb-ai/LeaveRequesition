@@ -1,46 +1,63 @@
-# Wix Database Schema Setup
+# Database Setup Guide: LeaveRequest System
 
-Before writing code for the leave application system, perform the following setup in the Wix CMS (Content Management System).
-
-## 1. Enable Velo Dev Mode
-1. Open up your Wix Editor.
-2. At the very top, click **Dev Mode** and then **Turn on Dev Mode**.
+This document outlines the required collections and field structures for the Wix CMS to ensure the LeaveRequest system functions correctly with the automated backend hooks.
 
 ---
 
-## 2. Create Collection A: `UserRegistry`
-This collection holds all authorized staff members and their reporting lines.
+## 1. UserRegistry Collection
+**Collection ID:** `UserRegistry`  
+**Purpose:** Stores authorized staff members and their hierarchy.
 
-1. Create a new collection named **UserRegistry** (Collection ID: `UserRegistry`).
-2. Add the following fields:
-   - `title` (Primary, Text): Staff Name
-   - `email` (Text): Username / Primary Key for identification
-   - `supervisorEmail` (Text): The direct supervisor's email address
-   - `status` (Text): Current approval status
-     - *Valid Options*: "Pending Confirmation", "Confirmed Supervisor", "Pending Principal", "Approved", "Declined"
+| Field Name | Field Key | Field Type | Description |
+| :--- | :--- | :--- | :--- |
+| Staff Name | `title` | Text | Primary field (Display name) |
+| Email | `email` | Text | Unique identifier / Wix Login Email |
+| Supervisor Email | `supervisorEmail` | Text | The default supervisor for this user |
+| Status | `status` | Text | Options: "Pending Confirmation", "Confirmed Supervisor", "Pending Principal", "Approved", "Declined" |
 
 ---
 
-## 3. Create Collection B: `LeaveApplications`
-This collection holds the actual leave request data submitted by staff.
+## 2. LeaveApplications Collection
+**Collection ID:** `LeaveApplications`  
+**Purpose:** Stores all leave requests and the full audit trail of decisions.
 
-1. Create another new collection named **LeaveApplications** (Collection ID: `LeaveApplications`).
-2. Add the following fields:
-   - `applicantEmail` (Reference): Reference to `UserRegistry` (or a simple Text field containing the email)
-   - `startingDate` (Date and Time): The starting date for the leave.
-   - `endDate` (Date and Time): The ending date for the leave.
-   - `totalDays` (Number): The calculated total days of leave requested.
-   - `actingSupervisorEmail` (Text): An editable field for the acting supervisor during the leave period.
-   - `reason` (Text): The reason for the leave application.
-   - `contingencyData` (Object / JSON): To store periods 1-7 contingency arrangements (e.g., classes impacted, substitution).
-   - `applicationStatus` (Text): The status of the application.
-     - *Valid Options*: "Pending Supervisor", "Pending: Principal", "Complete"
-   - `supervisorDecision` (Text): The supervisor's recommendation.
-     - *Valid Options*: "Supported", "Not Supported"
-   - `supervisorRemarks` (Text): Additional remarks from the supervisor.
-   - `principalDecision` (Text): The principal's final decision.
-     - *Valid Options*: "Approved", "Rejected"
-   - `principalRemarks` (Text): Additional remarks from the principal.
-   - `submissionTimestamp` (Date and Time): Auto-populated date/time when application was first submitted.
-   - `supervisorDecisionTimestamp` (Date and Time): Auto-populated date/time when supervisor made their decision.
-   - `principalDecisionTimestamp` (Date and Time): Auto-populated date/time when principal made their decision.
+### Applicant & Routing Fields
+| Field Name | Field Key | Field Type | Description |
+| :--- | :--- | :--- | :--- |
+| Applicant Email | `applicantEmail` | Text | Email of the staff member applying |
+| Original Supervisor | `originalSupervisorEmail` | Text | Pre-filled default supervisor email |
+| Acting Supervisor | `actingSupervisorEmail` | Text | Manual override email if an acting supervisor is used |
+| Master Supervisor | `master_supervisor` | Text | **System Field:** Populated by hook (Acting > Original) |
+
+### Leave Details
+| Field Name | Field Key | Field Type | Description |
+| :--- | :--- | :--- | :--- |
+| Starting Date | `startingDate` | Date and Time | First day of leave |
+| End Date | `endDate` | Date and Time | Last day of leave |
+| Total Days | `totalDays` | Number | Calculated duration |
+| Reason | `reason` | Text | Staff member's reason for leave |
+| Contingency Data | `contingencyData` | Object | Stores period 1-7 substitution plans |
+
+### Workflow & Decision Fields
+| Field Name | Field Key | Field Type | Description |
+| :--- | :--- | :--- | :--- |
+| Application Status | `applicationStatus` | Text | "Pending Supervisor", "Pending: Principal", "Complete" |
+| Supervisor Decision | `supervisorDecision` | Text | "Supported" or "Not Supported" |
+| Supervisor Remarks | `supervisorRemarks` | Text | Feedback from supervisor |
+| Principal Decision | `principalDecision` | Text | "Approved" or "Rejected" |
+| Principal Remarks | `principalRemarks` | Text | Feedback from Principal |
+
+### Automated Timestamps
+| Field Name | Field Key | Field Type | Description |
+| :--- | :--- | :--- | :--- |
+| Submission Time | `submissionTimestamp` | Date and Time | Recorded at initial submission |
+| Supervisor Time | `supervisorDecisionTimestamp` | Date and Time | Recorded at supervisor review |
+| Principal Time | `principalDecisionTimestamp` | Date and Time | Recorded at principal review |
+
+---
+
+## 💡 Implementation Notes
+1. **Field Keys:** When creating these in Wix, ensure the **Field Key** matches the table above exactly, as the code in `data.js` and `3_Leave_Request_Page.js` is case-sensitive.
+2. **Permissions:** - `UserRegistry`: Read (Site Member Author), Write (Admin).
+   - `LeaveApplications`: Read (Site Member Author), Write (Site Member).
+3. **Master Supervisor Logic:** Do not manually edit the `master_supervisor` field; the `beforeInsert` hook in `data.js` handles the fallback logic (Acting Email > Original Email) automatically.
