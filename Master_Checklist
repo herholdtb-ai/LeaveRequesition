@@ -1,0 +1,118 @@
+Master_Checklist.md
+This document provides a comprehensive, step-by-step guide to installing the code, setting up the database, and configuring the UI and automation for the LeaveRequest system.
+
+🛠 Phase 1: Editor & Database Setup
+Before adding code, you must prepare the Wix Editor and your data structures.
+
+1. Enable Velo Dev Mode
+Open your Wix Editor.
+
+In the top menu, click Dev Mode and select Turn on Dev Mode.
+
+2. Create UserRegistry Collection
+This collection holds all authorized staff members and their reporting lines.
+
+Go to CMS -> Create Collection. Name it UserRegistry (Collection ID: UserRegistry).
+
+Add the following fields:
+
+title (Primary, Text): Staff Name
+
+email (Text): Username / Primary Key for identification
+
+supervisorEmail (Text): The direct supervisor's email address
+
+status (Text): Current approval status. Valid options: "Pending Confirmation", "Confirmed Supervisor", "Pending Principal", "Approved", "Declined".
+
+3. Create LeaveApplications Collection
+This collection holds the actual leave request data submitted by staff.
+
+Create a collection named LeaveApplications (Collection ID: LeaveApplications).
+
+Add the following fields:
+
+applicantEmail (Reference/Text): Reference to UserRegistry or simple text containing the email.
+
+startingDate (Date and Time): The starting date for the leave.
+
+endDate (Date and Time): The ending date for the leave.
+
+totalDays (Number): The calculated total days of leave requested.
+
+actingSupervisorEmail (Text): An editable field for the acting supervisor during the leave period.
+
+reason (Text): The reason for the leave application.
+
+contingencyData (Object/JSON): To store periods 1-7 contingency arrangements.
+
+applicationStatus (Text): Valid options: "Pending Supervisor", "Pending: Principal", "Complete".
+
+supervisorDecision (Text): Valid options: "Supported", "Not Supported".
+
+supervisorRemarks (Text): Additional remarks from the supervisor.
+
+principalDecision (Text): Valid options: "Approved", "Rejected".
+
+principalRemarks (Text): Additional remarks from the principal.
+
+submissionTimestamp (Date and Time): Auto-populated date/time when application was first submitted.
+
+supervisorDecisionTimestamp (Date and Time): Auto-populated date/time when supervisor made their decision.
+
+principalDecisionTimestamp (Date and Time): Auto-populated date/time when principal made their decision.
+
+⚙️ Phase 2: Backend Code Installation
+Data Hooks: In the Velo sidebar under Backend, create a file named exactly data.js. Paste the contents of data.js from the repository.
+
+Registration Module: Under the same Backend folder, add a new Web Module (a .jsw file). Name it exactly registration.jsw. Paste the contents of registration.jsw from the repository.
+
+📝 Phase 3: Page Design & Frontend Code
+Create the following pages and ensure Element IDs in the properties panel match exactly as listed.
+
+1. Educator Registration Page
+Page Name: Educator Registration.
+
+Element IDs: #inpStaffName, #inpStaffEmail, #inpSupervisorEmail, #inpPassword, and a Submit Button #btnRegister.
+
+Status Elements: #txtErrorMsg (Red) and #txtSuccessMsg (Green) — set both to "Hidden on load".
+
+Code: Paste the code from 2_Registration_Page.js into the Page Code panel.
+
+2. Leave Request Page
+Page Name: Apply for Leave (Set Permissions to Members Only).
+
+Element IDs: #inpApplicantName (Read-only), #inpApplicantEmail (Read-only), #inpDirectSupervisor, #dateStart, #dateEnd, #inpTotalDays (Read-only), #inpReason, and #btnSubmit.
+
+Contingency: Add 7 TextBoxes: #inpPeriod1 through #inpPeriod7.
+
+Validation: Add #checkboxTruthfulness and #txtMessage (Hidden on load).
+
+Code: Paste the code from 3_Leave_Request_Page.js into the Page Code panel.
+
+3. Dashboards & History
+DH Dashboard: Create a private page with a Repeater (#repeaterRequests) and elements for #textEducator, #textDates, #textReason, #btnApprove, and #btnReject. Paste code from 4_DH_Dashboard.js.
+
+Principal Dashboard: Create a private page with Repeaters for registrations (#repeaterRegistrations) and leave requests (#repeaterLeaveRequests). Use IDs such as #textRegName, #textRegEmail, #btnApproveReg, #btnRejectReg, #textLeaveEducator, #textLeaveDates, #textLeaveReason, #btnApproveLeave, and #btnRejectLeave. Paste code from 5_Principal_Dashboard.js.
+
+My History: Create a page with #inputEmail, #btnLoadHistory, and a Repeater #repeaterHistory with #textDates, #textReason, and #textStatus. Paste code from 7_My_History_Page.js.
+
+⚡ Phase 4: Notifications & Workflow
+Choose one of the following methods to notify applicants of their leave status.
+
+Option A: Standard Wix Automations (No Code)
+Go to Wix Dashboard -> Automations -> + New Automation.
+
+Trigger: Select Wix Data -> Item Updated. Select the LeaveApplications collection.
+
+Condition: Click Add Condition -> applicationStatus -> Equals -> "Complete".
+
+Action: Select Send an Email.
+
+To: Choose the dynamic field applicantEmail.
+
+Customization: In the email editor, use the Add Dynamic Value button to insert database fields like [startingDate], [reason], or [decision] directly into the email text.
+
+Option B: Velo Data Hooks (Advanced Control)
+The data.js file contains an afterUpdate hook specifically designed to capture application history and compile it into an emailContent data object.
+
+Activation: To activate this, navigate to data.js (around Lines 96-97) and connect your preferred email service provider (such as Wix CRM or SendGrid) where indicated to trigger the compiled emailContent.body.
