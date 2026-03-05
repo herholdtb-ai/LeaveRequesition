@@ -1,41 +1,40 @@
-import { getSecret } from 'wix-secrets-backend';
-import sgMail from '@sendgrid/mail';
 import wixData from 'wix-data';
-
-// Configuration
-const SENDER_EMAIL = "info@hsgrabouw.co.za";
-const PRINCIPAL_EMAIL = "bezuidenhouth@hsgrabouw.co.za";
-const BASE_URL = "https://www.hsgrabouw.co.za";
+import { generateSecureToken } from 'backend/security.jsw';
+import { sendSecureEmail } from 'backend/sendGrid.jsw';
 
 /**
- * Internal Utility: Sends a SendGrid email
- * Assumes SENDGRID_API_KEY is stored in Wix Secrets Manager
+ * REGISTRATION MODULE (Updated)
+ * * Handles domain-restricted registration, secure token generation,
+ * and multi-stage verification routing.
  */
-async function sendEmail(to, subject, body) {
-    try {
-        const apiKey = await getSecret("SENDGRID_API_KEY");
-        sgMail.setApiKey(apiKey);
-        const msg = {
-            to: to,
-            from: SENDER_EMAIL,
-            subject: subject,
-            text: body,
-        };
-        await sgMail.send(msg);
-        return { success: true };
-    } catch (error) {
-        console.error("SendGrid Error:", error);
-        return { success: false, error: error.message };
-    }
-}
+
+const SCHOOL_DOMAIN = "@hsgrabouw.co.za";
 
 /**
- * STEP 1: Initial Registration
- * Triggered by the Frontend Registration Page.
+ * Registers a new staff member and triggers the verification email.
+ * @param {Object} staffData - Data from the registration form.
  */
 export async function registerStaff(staffData) {
     try {
-        const item = {
+        // 1. Domain Lockdown Check
+        if (!staffData.email.toLowerCase().endsWith(SCHOOL_DOMAIN)) {
+            return { 
+                success: false, 
+                message: `Registrasie geweier. Gebruik asseblief jou amptelike ${SCHOOL_DOMAIN} e-posadres.` 
+            };
+        }
+
+        // 2. Check if user already exists
+        const existingUser = await wixData.query("UserRegistry")
+            .eq("email", staffData.email)
+            .find();
+
+        if (existingUser.items.length > 0) {
+            return { success: false, message: "Hierdie e-posadres is reeds geregistreer." };
+        }
+
+        // 3. Prepare data for CMS
+        const toInsert = {
             ...staffData,
             status: "Unverified",
             emailVerified: false,
@@ -43,97 +42,64 @@ export async function registerStaff(staffData) {
             registrationTimestamp: new Date()
         };
 
-        const inserted = await wixData.insert("UserRegistry", item);
-        
-        // Generate verification link using the unique database ID
-        const verifyLink = `${BASE_URL}/verify-email?id=${inserted._id}`;
-        
-        const subject = "HS Grabouw: Verifieer jou e-pos / Verify your email";
-        const body = `Welkom by die HS Grabouw Verlofstelsel.\n\nKlik asseblief op die skakel hieronder om jou e-posadres te verifieer:\n${verifyLink}\n\nSodra jy geverifieer is, sal jou departementshoof gevra word om jou aanmelding te bevestig.`;
-        
-        await sendEmail(inserted.email, subject, body);
-        return { success: true, id: inserted._id };
+        // 4. Insert into UserRegistry
+        const result = await wixData.insert("UserRegistry", toInsert);
+
+        // 5. Generate Secure Verification Token
+        // This replaces the insecure method of sending the raw ID in the URL.
+        const token = await generateSecureToken(staffData.email, "Registration");
+
+        // 6. Send Verification Email via SendGrid
+        // PagePath 'verify-email' corresponds to the Wix page where the token is processed.
+        await sendSecureEmail(
+            staffData.email, 
+            "Verifieer jou HS Grabouw Verlofsisteem Rekening", 
+            "verify-email", 
+            token, 
+            "Verifieer E-pos"
+        );
+
+        return { 
+            success: true, 
+            message: "Registrasie suksesvol. Gaan asseblief jou e-pos na om jou rekening te verifieer." 
+        };
+
     } catch (err) {
-        return { success: false, error: err.message };
+        console.error("Registration Error:", err);
+        return { success: false, message: "Kon nie registrasie voltooi nie. Probeer asseblief weer later." };
     }
 }
 
 /**
- * STEP 2: Email Verification
- * Triggered by the /verify-email hidden page.
+ * Handles the Principal's final authorization of a staff member.
+ * Triggered by the secure link on the Principal Authorize page.
+ * @param {string} email - The email of the staff member to authorize.
  */
-export async function verifyUserEmail(userId) {
+export async function principalAuthorizeStaff(email) {
     try {
-        const user = await wixData.get("UserRegistry", userId);
-        
-        if (user && user.status === "Unverified") {
-            user.status = "Pending";
-            user.emailVerified = true;
-            await wixData.update("UserRegistry", user);
+        const results = await wixData.query("UserRegistry")
+            .eq("email", email)
+            .find();
 
-            // Trigger Email to Supervisor to confirm the reporting line
-            const confirmLink = `${BASE_URL}/confirm-staff?id=${user._id}`;
-            const supSubject = `Bevestig Personeellid: ${user.title}`;
-            const supBody = `Geagte Departementshoof,\n\n${user.title} het op die verlofstelsel geregistreer en aangedui dat hulle aan u rapporteer.\n\nKlik asseblief hieronder om te bevestig dat hierdie inligting korrek is:\n${confirmLink}\n\nNa u bevestiging sal die aansoek na die Prinsipaal gaan vir finale goedkeuring.`;
-            
-            await sendEmail(user.supervisorEmail, supSubject, supBody);
-            return { success: true };
-        }
-        return { success: false, message: "User already verified or not found." };
+        if (results.items.length === 0) throw new Error("Staff member not found.");
+
+        let staff = results.items[0];
+        staff.status = "Approved"; // Final status allowing system access
+        
+        await wixData.update("UserRegistry", staff);
+
+        // Send Welcome Email
+        await sendSecureEmail(
+            email,
+            "Jou rekening is goedgekeur",
+            "login", // Redirect to login page
+            "", // No token needed for simple welcome
+            "Teken In"
+        );
+
+        return { success: true };
     } catch (err) {
+        console.error("Authorization Error:", err);
         return { success: false, error: err.message };
     }
-}
-
-/**
- * STEP 3: Supervisor Vouching
- * Triggered by the /confirm-staff hidden page.
- */
-export async function supervisorConfirmStaff(userId) {
-    try {
-        const user = await wixData.get("UserRegistry", userId);
-        
-        if (user && user.status === "Pending") {
-            user.status = "Confirmed Supervisor";
-            user.supervisorConfirmed = true;
-            await wixData.update("UserRegistry", user);
-            
-            // Notify Principal that a vetted user is waiting for approval
-            const prinSubject = `Nuwe Personeel Goedkeuring: ${user.title}`;
-            const prinBody = `Meneer Bezuidenhout,\n\n'n Nuwe personeellid, ${user.title}, het hul e-pos geverifieer en is deur hul DH (${user.supervisorEmail}) bevestig.\n\nGaan asseblief na u dashboard om die finale goedkeuring te voltooi.`;
-            
-            await sendEmail(PRINCIPAL_EMAIL, prinSubject, prinBody);
-            return { success: true };
-        }
-        return { success: false, message: "Confirmation unavailable." };
-    } catch (err) {
-        return { success: false, error: err.message };
-    }
-}
-
-/**
- * STEP 4: Principal Final Status Hook
- * Automatically notifies user when Principal changes status to Approved or Declined.
- */
-export async function UserRegistry_afterUpdate(item, context) {
-    const originalItem = context.currentItem;
-
-    if (originalItem && originalItem.status !== item.status) {
-        let subject = "";
-        let body = "";
-
-        if (item.status === "Approved") {
-            subject = "HS Grabouw: Rekening Goedgekeur / Account Approved";
-            body = `Geagte ${item.title},\n\nJou rekening op die HS Grabouw digitale verlofstelsel is nou amptelik goedgekeur.\n\nJy kan nou aanmeld om jou verlofversoeke aanlyn in te dien by: ${BASE_URL}/leave-request\n\nVriendelike groete,\nHS Grabouw Administrasie`;
-        } 
-        else if (item.status === "Declined") {
-            subject = "HS Grabouw: Rekening Geweier / Account Declined";
-            body = `Geagte ${item.title},\n\nU registrasie vir die verlofstelsel is ongelukkig nie goedgekeur nie. Kontak asseblief die kantoor vir meer inligting.`;
-        }
-
-        if (subject) {
-            await sendEmail(item.email, subject, body);
-        }
-    }
-    return item;
 }
