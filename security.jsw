@@ -1,0 +1,43 @@
+import wixData from 'wix-data';
+
+/**
+ * Generates a unique 40-character token and stores it in the database.
+ */
+export async function generateSecureToken(email, type) {
+    if (!email.toLowerCase().endsWith("@hsgrabouw.co.za")) {
+        throw new Error("Unauthorized domain.");
+    }
+
+    const token = [...Array(40)].map(() => (~~(Math.random() * 36)).toString(36)).join('');
+    const expiry = new Date();
+    expiry.setHours(expiry.getHours() + 48); // Valid for 48 hours
+
+    const tokenData = {
+        token: token,
+        email: email,
+        type: type,
+        expiry: expiry
+    };
+
+    await wixData.insert("VerificationTokens", tokenData);
+    return token;
+}
+
+/**
+ * Validates a token and deletes it if successful (Single-use logic).
+ */
+export async function validateAndUseToken(token, type) {
+    const result = await wixData.query("VerificationTokens")
+        .eq("token", token)
+        .eq("type", type)
+        .gt("expiry", new Date())
+        .find();
+
+    if (result.items.length > 0) {
+        const email = result.items[0].email;
+        // Delete token immediately to prevent reuse
+        await wixData.remove("VerificationTokens", result.items[0]._id);
+        return { valid: true, email: email };
+    }
+    return { valid: false };
+}
