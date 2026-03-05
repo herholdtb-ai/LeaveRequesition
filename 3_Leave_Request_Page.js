@@ -1,24 +1,21 @@
-// PAGE: Leave Request Form
-// INSTRUCTIONS:
-// 1. Add inputs: #inpApplicantName, #inpApplicantEmail, #inpDirectSupervisor.
-// 2. Add date pickers: #dateStart, #dateEnd.
-// 3. Add text inputs: #inpTotalDays, #inpReason, #inpPeriod1 to #inpPeriod7.
-// 4. Add a checkbox: #checkboxTruthfulness.
-// 5. Add a submit button (#btnSubmit) and a message text (#txtMessage).
-
 import wixData from 'wix-data';
 import wixUsers from 'wix-users';
 
+/**
+ * PAGE: Apply for Leave
+ * This script handles the Educator's leave application form.
+ * It pre-fills user details and handles the logic for Original vs Acting Supervisors.
+ */
+
 $w.onReady(async function () {
-    // 1. Get Logged-in User
     let currentUser = wixUsers.currentUser;
 
+    // 1. Initial Load: Pre-fill Applicant Information
     if (currentUser.loggedIn) {
         try {
-            // Get user email from wix-users
             let userEmail = await currentUser.getEmail();
-
-            // 2. Query UserRegistry
+            
+            // Query the UserRegistry to get the staff member's details
             const registryQuery = await wixData.query("UserRegistry")
                 .eq("email", userEmail)
                 .find();
@@ -26,92 +23,79 @@ $w.onReady(async function () {
             if (registryQuery.items.length > 0) {
                 const userRecord = registryQuery.items[0];
 
-                // Check if they are fully approved
-                if (userRecord.status !== "Approved") {
-                    $w('#txtMessage').text = `Your account status is: ${userRecord.status}. You cannot submit leave yet.`;
-                    $w('#txtMessage').expand();
-                    $w('#btnSubmit').disable();
-                } else {
-                    // 3. Dynamic Prefill
+                // Check if account is approved before allowing submission
+                if (userRecord.status === "Approved") {
                     $w('#inpApplicantName').value = userRecord.title;
                     $w('#inpApplicantEmail').value = userRecord.email;
-                    // Pre-fill supervisor but allow override for "Acting" supervisor
-                    $w('#inpDirectSupervisor').value = userRecord.supervisorEmail;
-                    $w('#txtMessage').collapse();
+                    
+                    // Pre-fill the Original Supervisor field from Registry
+                    // The staff member can then optionally fill the Acting Supervisor field
+                    $w('#inpOriginalSupervisor').value = userRecord.supervisorEmail;
+                } else {
+                    $w('#btnSubmit').disable();
+                    $w('#txtMessage').text = "Account status is currently: " + userRecord.status + ". You cannot submit requests yet.";
+                    $w('#txtMessage').show();
                 }
             } else {
-                $w('#txtMessage').text = "We could not find your profile in the registry.";
-                $w('#txtMessage').expand();
-                $w('#btnSubmit').disable();
+                $w('#txtMessage').text = "Error: Staff profile not found in Registry.";
+                $w('#txtMessage').show();
             }
-        } catch (error) {
-            console.error("Error loading profile:", error);
-            $w('#txtMessage').text = "Error loading your profile data.";
-            $w('#txtMessage').expand();
+        } catch (err) {
+            console.error("Error loading user data:", err);
         }
-    } else {
-        $w('#txtMessage').text = "Please log in to apply for leave.";
-        $w('#txtMessage').expand();
-        $w('#btnSubmit').disable();
     }
 
-    // 4. Date Calculation Logic
-    // Trigger recalculation when dates change
+    // 2. Calculation Logic for Total Days
     $w('#dateStart').onChange(calculateDays);
     $w('#dateEnd').onChange(calculateDays);
 
     function calculateDays() {
         const start = $w('#dateStart').value;
         const end = $w('#dateEnd').value;
-
+        
         if (start && end) {
-            // Calculate difference in time (milliseconds)
-            const differenceInTime = end.getTime() - start.getTime();
-            // Calculate difference in days (+1 to include both start and end days if applicable)
-            const differenceInDays = Math.ceil(differenceInTime / (1000 * 3600 * 24)) + 1;
-
-            if (differenceInDays > 0) {
-                $w('#inpTotalDays').value = differenceInDays.toString();
-            } else {
-                $w('#inpTotalDays').value = "0";
-                $w('#txtMessage').text = "End date must be after start date.";
-                $w('#txtMessage').expand();
-            }
+            // Calculate inclusive days
+            const diffTime = Math.abs(end - start);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; 
+            
+            $w('#inpTotalDays').value = diffDays > 0 ? diffDays.toString() : "0";
         }
     }
 
-    // 5. Submission Logic
+    // 3. Submission Logic
     $w('#btnSubmit').onClick(async () => {
-        // Validation
-        const isTruthful = $w('#checkboxTruthfulness').checked;
-        if (!isTruthful) {
-            $w('#txtMessage').text = "You must declare the information is true before submitting.";
-            $w('#txtMessage').expand();
+        // Validation: Truthfulness Checkbox
+        if (!$w('#checkboxTruthfulness').checked) {
+            $w('#txtMessage').text = "Please confirm the declaration of truthfulness.";
+            $w('#txtMessage').show();
             return;
         }
 
-        const name = $w('#inpApplicantName').value;
-        const email = $w('#inpApplicantEmail').value;
-        const supervisor = $w('#inpDirectSupervisor').value; // Potentially an Acting Supervisor
-        const start = $w('#dateStart').value;
-        const end = $w('#dateEnd').value;
-        const totalDays = Number($w('#inpTotalDays').value);
-        const reason = $w('#inpReason').value;
-
-        if (!start || !end || totalDays <= 0 || !reason) {
-            $w('#txtMessage').text = "Please fill in all required fields properly.";
-            $w('#txtMessage').expand();
+        // Validation: Basic Fields
+        if (!$w('#dateStart').value || !$w('#dateEnd').value || !$w('#inpReason').value) {
+            $w('#txtMessage').text = "Please complete all required fields.";
+            $w('#txtMessage').show();
             return;
         }
 
         $w('#btnSubmit').disable();
         $w('#txtMessage').text = "Submitting application...";
-        $w('#txtMessage').expand();
+        $w('#txtMessage').show();
 
-        try {
-            // We use contingencyData as a JSON object for Periods 1-7
-            // Assuming there are input fields `#inpPeriod1` through `#inpPeriod7` on the form
-            const contingencyData = {
+        /**
+         * Mapping to Database ID: LeaveApplications
+         * originalSupervisorEmail: The staff member's usual DH.
+         * actingSupervisorEmail: The manual override (if any) entered on the page.
+         */
+        const applicationObj = {
+            "applicantEmail": $w('#inpApplicantEmail').value,
+            "startingDate": $w('#dateStart').value,
+            "endDate": $w('#dateEnd').value,
+            "totalDays": Number($w('#inpTotalDays').value),
+            "originalSupervisorEmail": $w('#inpOriginalSupervisor').value,
+            "actingSupervisorEmail": $w('#inpActingSupervisor').value, // NEW: Maps to the acting supervisor input
+            "reason": $w('#inpReason').value,
+            "contingencyData": {
                 period1: $w('#inpPeriod1').value || "",
                 period2: $w('#inpPeriod2').value || "",
                 period3: $w('#inpPeriod3').value || "",
@@ -119,36 +103,20 @@ $w.onReady(async function () {
                 period5: $w('#inpPeriod5').value || "",
                 period6: $w('#inpPeriod6').value || "",
                 period7: $w('#inpPeriod7').value || ""
-            };
+            },
+            "applicationStatus": "Pending Supervisor" // Backend hook will handle bypass if master_supervisor is Principal
+        };
 
-            const applicationObj = {
-                "applicantEmail": email, // Could also use registry reference ID here
-                "startingDate": start,
-                "endDate": end,
-                "totalDays": totalDays,
-                "actingSupervisorEmail": supervisor, // Editable field value
-                "reason": reason,
-                "contingencyData": contingencyData,
-                // Status defaults to Pending Supervisor. 
-                // Any bypass for Bezuidenhout is handled via Data Hooks on the backend.
-                "applicationStatus": "Pending Supervisor"
-            };
-
+        try {
             await wixData.insert("LeaveApplications", applicationObj);
-
-            $w('#txtMessage').text = "Leave application submitted successfully!";
-
-            // Clear the form
+            $w('#txtMessage').text = "Application submitted successfully! Check your email for confirmation.";
+            
+            // Optional: Reset specific fields
             $w('#inpReason').value = "";
-            $w('#checkboxTruthfulness').checked = false;
-            // Clear contingency fields...
-            for (let i = 1; i <= 7; i++) {
-                $w(`#inpPeriod${i}`).value = "";
-            }
-
+            $w('#inpActingSupervisor').value = "";
         } catch (error) {
-            console.error("Submission Error:", error);
-            $w('#txtMessage').text = "Failed to submit application. Please try again.";
+            console.error("Submission failed:", error);
+            $w('#txtMessage').text = "Submission failed. Please try again or contact the administrator.";
             $w('#btnSubmit').enable();
         }
     });
