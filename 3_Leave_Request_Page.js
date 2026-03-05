@@ -1,97 +1,104 @@
 import wixData from 'wix-data';
-import wixUsers from 'wix-users';
 
 /**
- * PAGE: Apply for Leave
- * This script handles the Educator's leave application form.
- * It maps 'Acting' vs 'Original' Supervisors for the backend data hook.
+ * Leave Request Page Code
+ * Enhanced with Domain Locking, Real-time Calendar Day Calculation, 
+ * and Vetted Supervisor Selection.
  */
 
-$w.onReady(async function () {
-    let currentUser = wixUsers.currentUser;
+$w.onReady(function () {
+    // 1. Initial UI Setup
+    setupSupervisorDropdown();
+    
+    // 2. Set up event listeners for real-time duration feedback
+    $w("#startingDate").onChange(() => {
+        calculateCalendarDays();
+    });
+    
+    $w("#endDate").onChange(() => {
+        calculateCalendarDays();
+    });
 
-    if (currentUser.loggedIn) {
-        try {
-            let userEmail = await currentUser.getEmail();
-            
-            // Query the UserRegistry to get the staff member's default supervisor
-            const registryQuery = await wixData.query("UserRegistry")
-                .eq("email", userEmail)
-                .find();
+    // 3. Optional: Set minimum date for pickers to today
+    const today = new Date();
+    $w("#startingDate").minDate = today;
+    $w("#endDate").minDate = today;
+});
 
-            if (registryQuery.items.length > 0) {
-                const userRecord = registryQuery.items[0];
+/**
+ * Populates the supervisor dropdown with approved staff members 
+ * holding @hsgrabouw.co.za email addresses.
+ */
+async function setupSupervisorDropdown() {
+    try {
+        const results = await wixData.query("UserRegistry")
+            .eq("status", "Approved")
+            .endsWith("email", "@hsgrabouw.co.za")
+            .ascending("title") // Sort by Name
+            .find();
 
-                if (userRecord.status === "Approved") {
-                    $w('#inpApplicantName').value = userRecord.title;
-                    $w('#inpApplicantEmail').value = userRecord.email;
-                    
-                    // PRE-FILL ORIGINAL SUPERVISOR
-                    // This is hidden or read-only on your page
-                    $w('#inpOriginalSupervisor').value = userRecord.supervisorEmail;
-                } else {
-                    $w('#btnSubmit').disable();
-                    $w('#txtMessage').text = "Account not yet approved by Principal.";
-                }
-            }
-        } catch (err) {
-            console.error("User Registry Load Error:", err);
+        if (results.items.length > 0) {
+            const options = results.items.map(user => {
+                return {
+                    label: user.title, // Staff Name
+                    value: user.email  // Staff Email used for routing
+                };
+            });
+
+            $w("#dropdownSupervisor").options = options;
+            $w("#dropdownSupervisor").placeholder = "Kies 'n Waarnemende Toesighouer (Opsioneel)";
+        } else {
+            $w("#dropdownSupervisor").placeholder = "Geen goedgekeurde toesighouers gevind nie";
         }
+    } catch (err) {
+        console.error("Error loading supervisors:", err);
     }
+}
 
-    // Days Calculation
-    $w('#dateStart').onChange(calculateDays);
-    $w('#dateEnd').onChange(calculateDays);
+/**
+ * Calculates the inclusive calendar day count (End - Start + 1).
+ * Updates the UI text element in real-time.
+ */
+function calculateCalendarDays() {
+    const start = $w("#startingDate").value;
+    const end = $w("#endDate").value;
 
-    function calculateDays() {
-        const start = $w('#dateStart').value;
-        const end = $w('#dateEnd').value;
-        if (start && end) {
-            const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 3600 * 24)) + 1;
-            $w('#inpTotalDays').value = diff > 0 ? diff.toString() : "0";
-        }
-    }
-
-    // SUBMIT ACTION
-    $w('#btnSubmit').onClick(async () => {
-        if (!$w('#checkboxTruthfulness').checked) {
-            $w('#txtMessage').text = "Please confirm the declaration.";
+    if (start && end) {
+        // Ensure end date is not before start date
+        if (end < start) {
+            $w("#txtTotalDays").text = "Ongeldige datumreeks";
+            $w("#txtTotalDays").style.color = "red";
             return;
         }
 
-        $w('#btnSubmit').disable();
-        $w('#txtMessage').text = "Submitting to " + ($w('#inpActingSupervisor').value || $w('#inpOriginalSupervisor').value) + "...";
+        // Calculate difference in milliseconds
+        const diffTime = Math.abs(end - start);
+        
+        // Convert to days and add 1 to make it inclusive
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+        
+        $w("#txtTotalDays").text = `${diffDays} Kalenderdag(e)`;
+        $w("#txtTotalDays").style.color = "black";
+    } else {
+        $w("#txtTotalDays").text = "Kies datums om totaal te sien";
+    }
+}
 
-        const applicationObj = {
-            "applicantEmail": $w('#inpApplicantEmail').value,
-            "startingDate": $w('#dateStart').value,
-            "endDate": $w('#dateEnd').value,
-            "totalDays": Number($w('#inpTotalDays').value),
-            
-            // MAPPING FOR MASTER_SUPERVISOR LOGIC
-            "originalSupervisorEmail": $w('#inpOriginalSupervisor').value,
-            "actingSupervisorEmail": $w('#inpActingSupervisor').value, 
-            
-            "reason": $w('#inpReason').value,
-            "contingencyData": {
-                period1: $w('#inpPeriod1').value || "",
-                period2: $w('#inpPeriod2').value || "",
-                period3: $w('#inpPeriod3').value || "",
-                period4: $w('#inpPeriod4').value || "",
-                period5: $w('#inpPeriod5').value || "",
-                period6: $w('#inpPeriod6').value || "",
-                period7: $w('#inpPeriod7').value || ""
-            },
-            "applicationStatus": "Pending Supervisor" 
-        };
+/**
+ * Validation before submission (triggered by the dataset or custom button)
+ */
+export function btnSubmit_click(event) {
+    const start = $w("#startingDate").value;
+    const end = $w("#endDate").value;
 
-        try {
-            // This insert triggers the 'beforeInsert' hook in data.js
-            await wixData.insert("LeaveApplications", applicationObj);
-            $w('#txtMessage').text = "Success! Initial confirmation email sent from info@hsgrabouw.co.za.";
-        } catch (error) {
-            $w('#txtMessage').text = "Error saving to database.";
-            $w('#btnSubmit').enable();
-        }
-    });
-});
+    if (!start || !end) {
+        // Show error message if dates are missing
+        return;
+    }
+
+    if (end < start) {
+        // Prevent submission of invalid date ranges
+        event.preventDefault();
+        return;
+    }
+}
